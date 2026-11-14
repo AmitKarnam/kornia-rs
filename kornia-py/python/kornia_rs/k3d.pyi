@@ -25,6 +25,8 @@ class PinholeCamera:
 
     def unproject(self, pixels: np.ndarray) -> np.ndarray: ...
 
+    def undistort(self, pixels: np.ndarray) -> np.ndarray: ...
+
 
 class FisheyeCamera:
     def __init__(

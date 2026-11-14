@@ -133,6 +133,43 @@ impl PyPinholeCamera {
         unproject_rows(&self.inner, py, pixels)
     }
 
+    /// Undistort raw image pixels to ideal pinhole pixels.
+    ///
+    /// Args:
+    ///     pixels: `(N, 2)` float64 array of distorted image pixels.
+    ///
+    /// Returns:
+    ///     `(N, 2)` float64 array of ideal pinhole pixels.
+    ///     Rows whose pixels cannot be undistorted are returned as `[nan, nan]`.
+    ///
+    /// Raises:
+    ///     ValueError: if `pixels` is not C-contiguous, aligned, or shape `(N, 2)`.
+    fn undistort<'py>(
+        &self,
+        py: Python<'py>,
+        pixels: Bound<'py, PyArray2<f64>>,
+    ) -> PyResult<Bound<'py, PyArray2<f64>>> {
+        let shape = pixels.shape();
+        if shape.len() != 2 || shape[1] != 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "expected (N, 2) float64 pixels, got shape {:?}",
+                shape
+            )));
+        }
+        let raw = c_slice(&pixels, "pixels")?;
+        let mut out = Vec::with_capacity(shape[0] * 2);
+        for pixel in raw.chunks_exact(2) {
+            if let Some(undistorted) = self.inner.undistort(pixel[0], pixel[1]) {
+                out.push(undistorted.x);
+                out.push(undistorted.y);
+            } else {
+                out.push(f64::NAN);
+                out.push(f64::NAN);
+            }
+        }
+        rows_to_numpy(py, out, 2)
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "PinholeCamera(fx={}, fy={}, cx={}, cy={}, k1={}, k2={}, p1={}, p2={})",

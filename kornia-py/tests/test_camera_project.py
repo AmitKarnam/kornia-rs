@@ -154,6 +154,105 @@ def test_pinhole_project_unproject_corner_roundtrip():
     np.testing.assert_allclose(pixels_back, corners, atol=1e-6)
 
 
+def test_pinhole_undistort_shape_and_dtype():
+    cam = K.k3d.PinholeCamera(fx=400.0, fy=410.0, cx=320.0, cy=240.0)
+    pixels = np.array(
+        [
+            [320.0, 240.0],
+            [400.0, 200.0],
+        ],
+        dtype=np.float64,
+    )
+
+    undistorted = cam.undistort(pixels)
+
+    assert undistorted.shape == (2, 2)
+    assert undistorted.dtype == np.float64
+
+
+def test_pinhole_undistort_zero_distortion_is_identity():
+    cam = K.k3d.PinholeCamera(fx=500.0, fy=500.0, cx=320.0, cy=240.0)
+    pixels = np.array(
+        [
+            [320.0, 240.0],
+            [200.0, 300.0],
+            [500.0, 120.0],
+        ],
+        dtype=np.float64,
+    )
+
+    undistorted = cam.undistort(pixels)
+
+    np.testing.assert_allclose(undistorted, pixels, atol=1e-12)
+
+
+def test_pinhole_undistort_rejects_wrong_column_count():
+    cam = K.k3d.PinholeCamera(fx=500.0, fy=500.0, cx=320.0, cy=240.0)
+    pixels = np.array([[0.0, 1.0, 2.0]], dtype=np.float64)
+
+    with np.testing.assert_raises(ValueError):
+        cam.undistort(pixels)
+
+
+def test_pinhole_undistort_invalid_pixel_maps_to_nan():
+    cam = K.k3d.PinholeCamera(
+        fx=500.0,
+        fy=500.0,
+        cx=376.0,
+        cy=240.0,
+        k1=-0.28,
+        k2=0.0,
+        p1=0.0,
+        p2=0.0,
+    )
+    pixels = np.array(
+        [
+            [400.0, 250.0],
+            [0.0, 0.0],
+        ],
+        dtype=np.float64,
+    )
+
+    undistorted = cam.undistort(pixels)
+
+    assert np.isfinite(undistorted[0]).all()
+    assert np.isnan(undistorted[1]).all()
+
+
+def test_pinhole_undistort_project_roundtrip_corner_pixels():
+    cam = K.k3d.PinholeCamera(
+        fx=458.654,
+        fy=457.296,
+        cx=367.215,
+        cy=248.375,
+        k1=-0.28340811,
+        k2=0.07395907,
+        p1=0.00019359,
+        p2=1.76187114e-05,
+    )
+    corners = np.array(
+        [
+            [0.0, 0.0],
+            [751.0, 0.0],
+            [0.0, 479.0],
+            [751.0, 479.0],
+        ],
+        dtype=np.float64,
+    )
+
+    ideal = cam.undistort(corners)
+    rays = np.column_stack(
+        [
+            (ideal[:, 0] - 367.215) / 458.654,
+            (ideal[:, 1] - 248.375) / 457.296,
+            np.ones(ideal.shape[0], dtype=np.float64),
+        ]
+    )
+    pixels_back = cam.project(rays)
+
+    np.testing.assert_allclose(pixels_back, corners, atol=1e-6)
+
+
 def test_fisheye_project_shape_and_dtype():
     cam = K.k3d.FisheyeCamera(fx=461.64, fy=459.72, cx=732.95, cy=720.54)
     points = np.array(
