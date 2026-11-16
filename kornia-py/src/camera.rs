@@ -1,9 +1,9 @@
 //! Python bindings for camera projection APIs in `kornia_3d::camera`.
 
-use crate::pyutils::{c_slice, rows_to_numpy};
+use crate::pyutils::{c_slice, rows_to_numpy, value_err};
 use kornia_3d::camera::{CameraModel, FisheyeCamera, PinholeCamera};
 use kornia_algebra::{Vec2F64, Vec3F64};
-use numpy::{PyArray2, PyUntypedArrayMethods};
+use numpy::{PyArray1, PyArray2, PyArray3, PyArrayMethods, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 
 fn project_rows<'py, C: CameraModel>(
@@ -62,6 +62,44 @@ fn unproject_rows<'py, C: CameraModel>(
     rows_to_numpy(py, out, 3)
 }
 
+fn project_with_jacobian_rows<'py, C: CameraModel>(
+    camera: &C,
+    py: Python<'py>,
+    points_cam: Bound<'py, PyArray2<f64>>,
+) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray3<f64>>)> {
+    let shape = points_cam.shape();
+    if shape.len() != 2 || shape[1] != 3 {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "expected (N, 3) float64 points, got shape {:?}",
+            shape
+        )));
+    }
+    let raw = c_slice(&points_cam, "points_cam")?;
+    let mut pixels = Vec::with_capacity(shape[0] * 2);
+    let mut jacobians = Vec::with_capacity(shape[0] * 6);
+    for point in raw.chunks_exact(3) {
+        let p_cam = Vec3F64::new(point[0], point[1], point[2]);
+        if let Some((pixel, rows)) = camera.project_with_jacobian(&p_cam) {
+            pixels.push(pixel.x);
+            pixels.push(pixel.y);
+            for row in rows {
+                jacobians.push(row.x);
+                jacobians.push(row.y);
+                jacobians.push(row.z);
+            }
+        } else {
+            pixels.push(f64::NAN);
+            pixels.push(f64::NAN);
+            jacobians.extend_from_slice(&[f64::NAN; 6]);
+        }
+    }
+    let pixels = rows_to_numpy(py, pixels, 2)?;
+    let jacobians = PyArray1::from_vec(py, jacobians)
+        .reshape([shape[0], 2, 3])
+        .map_err(value_err)?;
+    Ok((pixels, jacobians))
+}
+
 /// Python wrapper around [`PinholeCamera`].
 #[pyclass(
     name = "PinholeCamera",
@@ -112,6 +150,27 @@ impl PyPinholeCamera {
         points_cam: Bound<'py, PyArray2<f64>>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         project_rows(&self.inner, py, points_cam)
+    }
+
+    /// Project camera-frame 3D points to distorted image pixels and Jacobians.
+    ///
+    /// Args:
+    ///     points_cam: `(N, 3)` float64 array of camera-frame points.
+    ///
+    /// Returns:
+    ///     Tuple `(pixels, jacobians)` where:
+    ///     - `pixels` is `(N, 2)` float64 distorted image pixels.
+    ///     - `jacobians` is `(N, 2, 3)` float64 Jacobians `[du/dx, du/dy, du/dz; dv/dx, dv/dy, dv/dz]`.
+    ///     Rows whose points cannot be projected are returned as NaNs in both outputs.
+    ///
+    /// Raises:
+    ///     ValueError: if `points_cam` is not C-contiguous, aligned, or shape `(N, 3)`.
+    fn project_with_jacobian<'py>(
+        &self,
+        py: Python<'py>,
+        points_cam: Bound<'py, PyArray2<f64>>,
+    ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray3<f64>>)> {
+        project_with_jacobian_rows(&self.inner, py, points_cam)
     }
 
     /// Unproject distorted image pixels to unit camera-frame bearing rays.
@@ -235,6 +294,27 @@ impl PyFisheyeCamera {
         points_cam: Bound<'py, PyArray2<f64>>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         project_rows(&self.inner, py, points_cam)
+    }
+
+    /// Project camera-frame 3D points to distorted image pixels and Jacobians.
+    ///
+    /// Args:
+    ///     points_cam: `(N, 3)` float64 array of camera-frame points.
+    ///
+    /// Returns:
+    ///     Tuple `(pixels, jacobians)` where:
+    ///     - `pixels` is `(N, 2)` float64 distorted image pixels.
+    ///     - `jacobians` is `(N, 2, 3)` float64 Jacobians `[du/dx, du/dy, du/dz; dv/dx, dv/dy, dv/dz]`.
+    ///     Rows whose points cannot be projected are returned as NaNs in both outputs.
+    ///
+    /// Raises:
+    ///     ValueError: if `points_cam` is not C-contiguous, aligned, or shape `(N, 3)`.
+    fn project_with_jacobian<'py>(
+        &self,
+        py: Python<'py>,
+        points_cam: Bound<'py, PyArray2<f64>>,
+    ) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray3<f64>>)> {
+        project_with_jacobian_rows(&self.inner, py, points_cam)
     }
 
     /// Unproject distorted image pixels to unit camera-frame bearing rays.

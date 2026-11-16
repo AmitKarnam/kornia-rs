@@ -3,6 +3,21 @@ import numpy as np
 import kornia_rs as K
 
 
+def _assert_jacobian_matches_finite_differences(cam, point: np.ndarray, atol_scale: float = 1e-5):
+    points = np.array([point], dtype=np.float64)
+    pixels, jacobians = cam.project_with_jacobian(points)
+    analytic = jacobians[0]
+    h = 1e-6
+    for col in range(3):
+        delta = np.zeros(3, dtype=np.float64)
+        delta[col] = h
+        plus = cam.project(np.array([point + delta], dtype=np.float64))[0]
+        minus = cam.project(np.array([point - delta], dtype=np.float64))[0]
+        numeric = (plus - minus) / (2.0 * h)
+        tolerance = atol_scale * max(np.linalg.norm(analytic[:, col]), 1.0)
+        np.testing.assert_allclose(analytic[:, col], numeric, atol=tolerance, rtol=0.0)
+
+
 def test_pinhole_project_shape_and_dtype():
     cam = K.k3d.PinholeCamera(fx=400.0, fy=410.0, cx=320.0, cy=240.0)
     points = np.array(
@@ -50,6 +65,61 @@ def test_pinhole_project_rejects_wrong_column_count():
 
     with np.testing.assert_raises(ValueError):
         cam.project(points)
+
+
+def test_pinhole_project_with_jacobian_shape_and_dtype():
+    cam = K.k3d.PinholeCamera(fx=400.0, fy=410.0, cx=320.0, cy=240.0)
+    points = np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [0.2, -0.1, 2.0],
+        ],
+        dtype=np.float64,
+    )
+
+    pixels, jacobians = cam.project_with_jacobian(points)
+
+    assert pixels.shape == (2, 2)
+    assert jacobians.shape == (2, 2, 3)
+    assert pixels.dtype == np.float64
+    assert jacobians.dtype == np.float64
+
+
+def test_pinhole_project_with_jacobian_invalid_point_maps_to_nan():
+    cam = K.k3d.PinholeCamera(fx=500.0, fy=500.0, cx=320.0, cy=240.0)
+    points = np.array(
+        [
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, -1.0],
+        ],
+        dtype=np.float64,
+    )
+
+    pixels, jacobians = cam.project_with_jacobian(points)
+
+    assert np.isfinite(pixels[0]).all()
+    assert np.isfinite(jacobians[0]).all()
+    assert np.isnan(pixels[1]).all()
+    assert np.isnan(jacobians[1]).all()
+
+
+def test_pinhole_project_with_jacobian_matches_finite_differences():
+    cam = K.k3d.PinholeCamera(
+        fx=458.654,
+        fy=457.296,
+        cx=367.215,
+        cy=248.375,
+        k1=-0.28340811,
+        k2=0.07395907,
+        p1=0.00019359,
+        p2=1.76187114e-05,
+    )
+    for point in (
+        np.array([0.0, 0.0, 2.0], dtype=np.float64),
+        np.array([0.4, -0.3, 1.5], dtype=np.float64),
+        np.array([-0.6, 0.35, 1.0], dtype=np.float64),
+    ):
+        _assert_jacobian_matches_finite_differences(cam, point)
 
 
 def test_pinhole_unproject_shape_and_dtype():
@@ -267,6 +337,62 @@ def test_fisheye_project_shape_and_dtype():
 
     assert pixels.shape == (2, 2)
     assert pixels.dtype == np.float64
+
+
+def test_fisheye_project_with_jacobian_shape_and_dtype():
+    cam = K.k3d.FisheyeCamera(fx=461.64, fy=459.72, cx=732.95, cy=720.54)
+    points = np.array(
+        [
+            [0.1, -0.2, 1.0],
+            [0.5, 0.3, -0.2],
+        ],
+        dtype=np.float64,
+    )
+
+    pixels, jacobians = cam.project_with_jacobian(points)
+
+    assert pixels.shape == (2, 2)
+    assert jacobians.shape == (2, 2, 3)
+    assert pixels.dtype == np.float64
+    assert jacobians.dtype == np.float64
+
+
+def test_fisheye_project_with_jacobian_invalid_point_maps_to_nan():
+    cam = K.k3d.FisheyeCamera(fx=461.64, fy=459.72, cx=732.95, cy=720.54)
+    points = np.array(
+        [
+            [0.1, -0.2, 1.0],
+            [0.0, 0.0, -1.0],
+        ],
+        dtype=np.float64,
+    )
+
+    pixels, jacobians = cam.project_with_jacobian(points)
+
+    assert np.isfinite(pixels[0]).all()
+    assert np.isfinite(jacobians[0]).all()
+    assert np.isnan(pixels[1]).all()
+    assert np.isnan(jacobians[1]).all()
+
+
+def test_fisheye_project_with_jacobian_matches_finite_differences():
+    cam = K.k3d.FisheyeCamera(
+        fx=461.64,
+        fy=459.72,
+        cx=732.95,
+        cy=720.54,
+        k1=0.0344,
+        k2=-0.0216,
+        k3=0.0031,
+        k4=-0.0005,
+    )
+    for point in (
+        np.array([0.0, 0.0, 2.0], dtype=np.float64),
+        np.array([0.4, -0.3, 1.5], dtype=np.float64),
+        np.array([3.0, 1.0, 0.5], dtype=np.float64),
+        np.array([1.0, 0.5, -0.2], dtype=np.float64),
+    ):
+        _assert_jacobian_matches_finite_differences(cam, point)
 
 
 def test_fisheye_project_optical_center_behind_maps_to_nan():
